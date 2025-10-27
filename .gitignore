@@ -1,10 +1,46 @@
-venv/
+# Python
 __pycache__/
-*.pyc
-.pytest_cache/
-.ipynb_checkpoints/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+mpo/
+env/
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Data
 data/
-processed/
 *.csv
-*.pkl
+*.json
+!requirements.txt
+
+# Results
+results/
+logs/
+*.log
+
+# Environment
+.env
+.venv
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Project specific
+ethereum-frauddetection-dataset/
+processed/
