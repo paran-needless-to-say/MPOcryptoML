@@ -12,6 +12,7 @@ from scoring import NormalizedScorer
 from anomaly_detector import MPOCryptoMLDetector
 import networkx as nx
 import numpy as np
+from tqdm import tqdm
 
 
 def load_graph_from_json(json_path: str):
@@ -63,16 +64,19 @@ def main():
     
     print(f"  Found {len(source_nodes)} source nodes")
     
-    # 샘플링
-    sample_nodes = list(source_nodes)[:min(25, len(source_nodes))]
+    # 샘플링 (더 빠른 테스트를 위해 10개로 줄임)
+    sample_nodes = list(source_nodes)[:min(10, len(source_nodes))]
     
     ppr_results = {}
     ppr_scores_dict = {}
     
-    for node in sample_nodes:
+    # 진행 상황 표시
+    print(f"  Computing PPR for {len(sample_nodes)} source nodes...")
+    
+    for node in tqdm(sample_nodes, desc="  PPR", ncols=70):
         sps, svn, all_nodes_list = ppr.compute_single_source_ppr(node)
         ppr_results[node] = svn
-        ppr_scores_dict[node] = sps
+        ppr_scores_dict[node] = (sps, all_nodes_list)
     
     print(f"  ✓ PPR computed")
     
@@ -85,15 +89,12 @@ def main():
     # 4. Anomaly Detection
     print("\n[Step 4] Training and evaluating...")
     
-    # Full PPR scores
+    # Full PPR scores with node mapping
     full_ppr_scores = {}
-    node_to_idx = {node: idx for idx, node in enumerate(graph.nodes)}
+    all_nodes_list = list(graph.nodes)
     
-    for node in graph.nodes:
-        if node in ppr_scores_dict:
-            full_ppr_scores[node] = ppr_scores_dict[node]
-        else:
-            full_ppr_scores[node] = np.zeros(len(graph.nodes))
+    for source in ppr_scores_dict.keys():
+        full_ppr_scores[source] = ppr_scores_dict[source]
     
     detector = MPOCryptoMLDetector(
         ppr_scores=full_ppr_scores,

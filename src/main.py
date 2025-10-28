@@ -79,10 +79,10 @@ def run_mpocrypto_ml_pipeline(
     ppr_scores_dict = {}
     
     for node in sample_nodes:
-        sps, svn, nodes_list = ppr.compute_single_source_ppr(node)
+        sps, svn, all_nodes_list = ppr.compute_single_source_ppr(node)
         ppr_results[node] = svn
-        # 전체 스코어도 저장 (anomaly detection에 사용)
-        ppr_scores_dict[node] = sps
+        # 전체 스코어와 노드 리스트 저장 (anomaly detection에 사용)
+        ppr_scores_dict[node] = (sps, all_nodes_list)
     
     print(f"  ✓ PPR computed for {len(ppr_results)} nodes")
     
@@ -98,14 +98,8 @@ def run_mpocrypto_ml_pipeline(
     print("\n[Step 4] Training Logistic Regression model...")
     
     # PPR 스코어 딕셔너리 생성 (전체 노드용)
-    full_ppr_scores = {}
-    for node in graph_obj.nodes:
-        if node in ppr_scores_dict:
-            full_ppr_scores[node] = ppr_scores_dict[node]
-        else:
-            # 샘플링되지 않은 노드는 더미 스코어 사용
-            dummy_scores = np.zeros(len(graph_obj.nodes))
-            full_ppr_scores[node] = dummy_scores
+    # ppr_scores_dict는 이미 (sps, all_nodes_list) 튜플 형태
+    full_ppr_scores = ppr_scores_dict
     
     detector = MPOCryptoMLDetector(
         ppr_scores=full_ppr_scores,

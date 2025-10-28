@@ -194,9 +194,9 @@ class PersonalizedPageRank:
                         current = random.choice(out_neighbors)
                         steps += 1
                     
-                    if current in neighbors:
-                        # Line 24: π̂(s, v_i) ← π̂(s, v_i) + 1 / K(s)
-                        final_score[current] += 1.0 / K_s
+                    # Line 24: π̂(s, v_i) ← π̂(s, v_i) + 1 / K(s)
+                    # Random walk 끝점의 모든 노드에 점수 부여 (neighbors 제한 제거)
+                    final_score[current] += 1.0 / K_s
         
         # SPS와 SVN 생성
         # sps는 전체 노드에 대한 PPR 점수 배열

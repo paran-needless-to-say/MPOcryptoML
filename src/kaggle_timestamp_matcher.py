@@ -43,29 +43,42 @@ def load_kaggle_addresses_with_labels(csv_path: str) -> pd.DataFrame:
     return result
 
 
-def get_timestamp_from_etherscan(address: str, api_key: str) -> List[Tuple[str, str, float, int]]:
+def get_timestamp_from_etherscan(address: str, api_key: str, 
+                                  start_timestamp: int = None, 
+                                  end_timestamp: int = None) -> List[Tuple[str, str, float, int]]:
     """
     Etherscan API V2에서 특정 주소의 거래를 가져와서 (from, to, value, timestamp) 리스트 반환
     
     Args:
         address: 이더리움 주소
         api_key: Etherscan API key
+        start_timestamp: 시작 timestamp (Unix timestamp) - Kaggle 집계 기간 시작
+        end_timestamp: 종료 timestamp (Unix timestamp) - Kaggle 집계 기간 종료
     
     Returns:
         List of (from, to, value, timestamp)
+    
+    ⚠️ 중요: Kaggle 데이터와 시점 맞추기 위해 블록/타임스탬프 범위 제한 필요
     """
     # Etherscan API V2 사용 (chainid 필수)
     # Ethereum mainnet = 1
     url = "https://api.etherscan.io/v2/api"
     transactions = []
     
+    # 블록 번호 제한 (초기값)
+    start_block = 0
+    end_block = 99999999
+    
+    # 타임스탬프 기준으로 블록 범위 추정 가능 (선택적)
+    # 주의: 정확한 매칭을 위해서는 Kaggle 데이터셋의 실제 생성 시점 필요
+    
     params = {
         'chainid': '1',  # Ethereum mainnet
         'module': 'account',
         'action': 'txlist',
         'address': address,
-        'startblock': 0,
-        'endblock': 99999999,
+        'startblock': start_block,
+        'endblock': end_block,
         'page': 1,
         'offset': 100,  # 최대 100개
         'sort': 'desc',
@@ -84,6 +97,12 @@ def get_timestamp_from_etherscan(address: str, api_key: str) -> List[Tuple[str, 
                 to_addr = tx.get('to', '')
                 value = float(tx.get('value', '0')) / 1e18  # Wei to ETH
                 timestamp = int(tx.get('timeStamp', '0'))
+                
+                # 타임스탬프 필터링 (제공된 경우)
+                if start_timestamp and timestamp < start_timestamp:
+                    continue
+                if end_timestamp and timestamp > end_timestamp:
+                    continue
                 
                 if from_addr and to_addr and value > 0:
                     transactions.append((from_addr, to_addr, value, timestamp))

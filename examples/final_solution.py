@@ -64,16 +64,20 @@ def main():
         for from_addr, to_addr, value, timestamp in txs:
             graph.add_edge(from_addr, to_addr, value, timestamp)
         
-        # 라벨 설정
+        # 라벨 설정 (Known 노드만)
         if address in anomaly_addresses:
             labels[address] = 1  # Anomaly
         else:
-            labels[address] = 0  # Normal
+            labels[address] = 0  # Normal (정상 Known)
+        
+        # Unknown 노드는 라벨 딕셔너리에 추가하지 않음!
+        # → 거래 상대방 중 일부는 Unknown
     
-    # 그 외 노드는 정상으로
-    for node in graph.nodes:
-        if node not in labels:
-            labels[node] = 0
+    # ✅ Weak Supervision 구현:
+    # - Known: 직접 수집한 주소들 (라벨 있음)
+    # - Unknown: 거래 상대방 (라벨 없음)
+    # - PPR은 전체 노드에 적용 (구조 정보 활용)
+    # - LR은 Known만 학습 (라벨 있음)
     
     graph.set_labels(labels)
     
@@ -105,7 +109,10 @@ def main():
     ppr_results = {}
     ppr_scores = {}
     
-    for node in sample_nodes:
+    from tqdm import tqdm
+    print(f"  Computing PPR for {len(sample_nodes)} source nodes...")
+    
+    for node in tqdm(sample_nodes, desc="  PPR", ncols=70):
         sps, svn, nodes_list = ppr.compute_single_source_ppr(node)
         ppr_results[node] = svn
         ppr_scores[node] = sps

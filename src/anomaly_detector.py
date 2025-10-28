@@ -19,12 +19,12 @@ class MPOCryptoMLDetector:
     MPOCryptoML 논문의 전체 파이프라인 구현
     """
     
-    def __init__(self, ppr_scores: Dict[str, np.ndarray], 
+    def __init__(self, ppr_scores: Dict[str, Tuple[np.ndarray, List[str]]], 
                  feature_scores: pd.DataFrame,
                  labels: Dict[str, int]):
         """
         Args:
-            ppr_scores: {node: PPR_scores_array} 형태의 딕셔너리
+            ppr_scores: {source: (sps_array, all_nodes_list)} 형태의 딕셔너리
             feature_scores: NTS와 NWS를 포함한 DataFrame
             labels: {node: label} 형태의 딕셔너리 (0=정상, 1=사기)
         """
@@ -50,25 +50,47 @@ class MPOCryptoMLDetector:
             test_size: 테스트 세트 비율
             random_state: 랜덤 시드
         """
-        # 훈련/테스트 분할
-        X_train, X_test, y_train, y_test = train_test_split(
-            self.X, self.y, test_size=test_size, 
+        # 훈련/테스트 분할 (indices 저장)
+        from sklearn.model_selection import train_test_split
+        import pandas as pd
+        
+        # 노드 리스트와 함께 분할
+        node_list = self.feature_scores['node'].values
+        
+        train_indices, test_indices, y_train, y_test = train_test_split(
+            range(len(self.X)), self.y, test_size=test_size, 
             random_state=random_state, stratify=self.y
         )
         
-        # 모델 학습
-        self.model = LogisticRegression(max_iter=1000, random_state=random_state)
+        X_train = self.X[train_indices]
+        X_test = self.X[test_indices]
+        
+        # train/test split 정보 저장
+        self.train_indices = train_indices
+        self.test_indices = test_indices
+        self.train_nodes = [node_list[i] for i in train_indices]
+        self.test_nodes = [node_list[i] for i in test_indices]
+        
+        # 모델 학습 (클래스 불균형 해결)
+        # class_weight='balanced': 자동으로 불균형 가중치 적용
+        self.model = LogisticRegression(
+            max_iter=1000, 
+            random_state=random_state,
+            class_weight='balanced',  # ✅ 불균형 해결 추가!
+            solver='lbfgs'  # 안정적인 solver
+        )
         self.model.fit(X_train, y_train)
         
-        # 예측 및 평가
+        # 예측 및 평가 (test set만)
         y_pred = self.model.predict(X_test)
         y_pred_proba = self.model.predict_proba(X_test)[:, 1]
         
         print("\n=== Logistic Regression Evaluation ===")
+        print(f"Train size: {len(train_indices)}, Test size: {len(test_indices)}")
         print(f"Accuracy: {accuracy_score(y_test, y_pred):.4f}")
-        print(f"Precision: {precision_score(y_test, y_pred):.4f}")
-        print(f"Recall: {recall_score(y_test, y_pred):.4f}")
-        print(f"F1-score: {f1_score(y_test, y_pred):.4f}")
+        print(f"Precision: {precision_score(y_test, y_pred, zero_division=0):.4f}")
+        print(f"Recall: {recall_score(y_test, y_pred, zero_division=0):.4f}")
+        print(f"F1-score: {f1_score(y_test, y_pred, zero_division=0):.4f}")
         print(f"AUC: {roc_auc_score(y_test, y_pred_proba):.4f}")
         
         return self.model
@@ -77,14 +99,18 @@ class MPOCryptoMLDetector:
         """
         패턴 점수 F(θ,ω)(vi) 계산
         학습된 모델을 사용하여 각 노드의 패턴 점수 예측
+        
+        수정: 전체 데이터가 아닌, Train 데이터만 사용하여 데이터 누수 방지
         """
         if self.model is None:
             raise ValueError("Model not trained yet. Call train_logistic_regression() first.")
         
-        # 각 노드의 패턴 점수 계산 (확률값)
-        pattern_probabilities = self.model.predict_proba(self.X)[:, 1]
+        # Train 데이터만으로 패턴 점수 계산
+        X_train = self.X[self.train_indices]
+        pattern_probabilities = self.model.predict_proba(X_train)[:, 1]
         
-        for idx, node in enumerate(self.feature_scores['node']):
+        # Train 노드만 저장
+        for idx, node in enumerate(self.train_nodes):
             self.pattern_scores[node] = pattern_probabilities[idx]
         
         return self.pattern_scores
@@ -102,34 +128,22 @@ class MPOCryptoMLDetector:
         if not self.pattern_scores:
             self.compute_pattern_scores()
         
-        # PPR은 {source: (sps, svn, all_nodes_list)} 형태로 저장되어야 함
-        # 하지만 현재는 ppr_scores_dict에 sps만 저장
-        # 따라서 PPR 클래스에서 반환된 all_nodes_list 정보가 필요함
-        
-        # 임시로 첫 번째 source의 ppr_array 길이를 확인
+        # 첫 번째 source의 노드 리스트로 인덱스 매핑 생성
         first_source = list(self.ppr_scores.keys())[0]
-        first_ppr_array = self.ppr_scores[first_source]
+        ppr_array, all_nodes_list = self.ppr_scores[first_source]
+        node_to_idx = {node: idx for idx, node in enumerate(all_nodes_list)}
         
-        # ppr_array는 전체 그래프 노드에 대한 점수
-        # feature_scores의 노드들은 방문된 노드만 포함하므로
-        # 노드 이름으로 직접 매핑 필요
-        
-        for node in self.feature_scores['node']:
+        # Train 데이터만 Anomaly Score 계산
+        for node in self.train_nodes:
             # 각 source로부터 받은 PPR 점수 합계
             # π(vi) = Σ_{s in sources} π̂(s, vi)
             
-            # ppr_scores는 {source: sps_array} 형태
-            # sps_array[i]는 전체 그래프의 특정 노드의 점수
-            # 하지만 어떤 노드인지 알기 위해 노드 인덱스 정보 필요
-            
-            # 현재는 인덱스를 노드 이름으로 매핑 불가능
-            # 임시로 feature_scores의 idx 사용
-            idx = list(self.feature_scores['node']).index(node)
-            
             ppr_sum = 0.0
-            for source_node, ppr_array in self.ppr_scores.items():
-                if idx < len(ppr_array):
-                    ppr_sum += ppr_array[idx]
+            for source_node, (ppr_array, all_nodes_list) in self.ppr_scores.items():
+                if node in node_to_idx:
+                    idx = node_to_idx[node]
+                    if idx < len(ppr_array):
+                        ppr_sum += ppr_array[idx]
             
             # Anomaly Score = PPR 점수 합계 / 패턴 점수
             pattern_score = self.pattern_scores[node]
@@ -212,20 +226,26 @@ class MPOCryptoMLDetector:
     def get_results_df(self) -> pd.DataFrame:
         """
         모든 결과를 포함한 DataFrame 반환
+        Train 데이터만 포함 (데이터 누수 방지)
         """
         if not self.anomaly_scores:
             self.compute_anomaly_scores()
         
         results = []
-        for node in self.feature_scores['node']:
-            results.append({
-                'node': node,
-                'label': self.labels[node],
-                'nts': self.feature_scores[self.feature_scores['node'] == node]['nts'].values[0],
-                'nws': self.feature_scores[self.feature_scores['node'] == node]['nws'].values[0],
-                'pattern_score': self.pattern_scores[node],
-                'anomaly_score': self.anomaly_scores[node]
-            })
+        # Train 노드만 포함
+        for node in self.train_nodes:
+            row = self.feature_scores[self.feature_scores['node'] == node]
+            if len(row) > 0:
+                nts = row['nts'].values[0]
+                nws = row['nws'].values[0]
+                results.append({
+                    'node': node,
+                    'label': self.labels.get(node, 0),
+                    'nts': nts,
+                    'nws': nws,
+                    'pattern_score': self.pattern_scores.get(node, 0.0),
+                    'anomaly_score': self.anomaly_scores.get(node, 0.0)
+                })
         
         return pd.DataFrame(results)
 
